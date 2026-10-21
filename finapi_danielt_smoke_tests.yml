@@ -10,7 +10,7 @@ resources:
             - main
 
 variables:
-  - group: LogAnalyticsSecrets
+  - group: LogAnalyticsIngestion
 
 pool:
   name: student-lab-pool
@@ -25,10 +25,16 @@ steps:
       /azagent/venv/bin/pip3 install pytest requests
     displayName: "Install dependencies"
 
-  - script: |
-      export LOG_ANALYTICS_WORKSPACE_ID=$(LOG_ANALYTICS_WORKSPACE_ID)
-      export LOG_ANALYTICS_SHARED_KEY=$(LOG_ANALYTICS_SHARED_KEY)
-      /azagent/venv/bin/python3 -m pytest -v --tb=line  -W "ignore::DeprecationWarning" -s tests/smoke_tests_centralized.py --junitxml=smoke-results.xml
+  - task: AzureCLI@2
+    inputs:
+      azureSubscription: 'AzureDevopsConnection'
+      scriptType: 'bash'
+      scriptLocation: 'inlineScript'
+      inlineScript: |
+        export LOGS_INGESTION_ENDPOINT=$(LOGS_INGESTION_ENDPOINT)
+        export LOGS_INGESTION_DCR_ID=$(LOGS_INGESTION_DCR_ID)
+        export LOGS_INGESTION_TOKEN=$(az account get-access-token --resource https://monitor.azure.com --query accessToken -o tsv)
+        /azagent/venv/bin/python3 -m pytest -v --tb=line  -W "ignore::DeprecationWarning" -s tests/smoke_tests_centralized.py --junitxml=smoke-results.xml
     displayName: "Run full smoke test suite"
 
 
@@ -39,34 +45,40 @@ steps:
       testRunTitle: 'Post-deployment Smoke Test'
       failTaskOnFailedTests: false
 
-  - script: |
-      export LOG_ANALYTICS_WORKSPACE_ID=$(LOG_ANALYTICS_WORKSPACE_ID)
-      export LOG_ANALYTICS_SHARED_KEY=$(LOG_ANALYTICS_SHARED_KEY)
-      export PIPELINE_NAME=$(Build.DefinitionName)
-      export RUN_ID=$(Build.BuildId)
-      export BUILD_STATUS=$(Agent.JobStatus)
+  - task: AzureCLI@2
+    inputs:
+      azureSubscription: 'AzureDevopsConnection'
+      scriptType: 'bash'
+      scriptLocation: 'inlineScript'
+      inlineScript: |
+        export LOGS_INGESTION_ENDPOINT=$(LOGS_INGESTION_ENDPOINT)
+        export LOGS_INGESTION_DCR_ID=$(LOGS_INGESTION_DCR_ID)
+        export LOGS_INGESTION_TOKEN=$(az account get-access-token --resource https://monitor.azure.com --query accessToken -o tsv)
+        export PIPELINE_NAME=$(Build.DefinitionName)
+        export RUN_ID=$(Build.BuildId)
+        export BUILD_STATUS=$(Agent.JobStatus)
 
-      END_TIME=$(date +%s.%3N)
-      export PIPELINE_END_TIME_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-      export PIPELINE_DURATION=$(awk "BEGIN {print $END_TIME - $(PIPELINE_START_TIME)}")
-      echo "Duration is $PIPELINE_DURATION seconds"
+        END_TIME=$(date +%s.%3N)
+        export PIPELINE_END_TIME_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        export PIPELINE_DURATION=$(awk "BEGIN {print $END_TIME - $(PIPELINE_START_TIME)}")
+        echo "Duration is $PIPELINE_DURATION seconds"
 
-      /azagent/venv/bin/python3 -c "
-      import os
-      from tests.log_analytics import send_log_to_loganalytics
+        /azagent/venv/bin/python3 -c "
+        import os
+        from tests.log_analytics import send_log_to_loganalytics
 
-      pipeline_data = [{
-          'pipeline': os.environ.get('PIPELINE_NAME'),
-          'run_id': os.environ.get('RUN_ID'),
-          'status': os.environ.get('BUILD_STATUS'),
-          'start_time': os.environ.get('PIPELINE_START_TIME_UTC'),
-          'end_time': os.environ.get('PIPELINE_END_TIME_UTC'),
-          'duration_seconds': float(os.environ.get('PIPELINE_DURATION') or 0)
-      }]
+        pipeline_data = [{
+            'pipeline': os.environ.get('PIPELINE_NAME'),
+            'run_id': os.environ.get('RUN_ID'),
+            'status': os.environ.get('BUILD_STATUS'),
+            'start_time': os.environ.get('PIPELINE_START_TIME_UTC'),
+            'end_time': os.environ.get('PIPELINE_END_TIME_UTC'),
+            'duration_seconds': float(os.environ.get('PIPELINE_DURATION') or 0)
+        }]
 
-      send_log_to_loganalytics(
-          log_type='PipelineRunSummary',
-          log_data=pipeline_data
-      )"
+        send_log_to_loganalytics(
+            log_type='PipelineRunSummary',
+            log_data=pipeline_data
+        )"
     condition: always()
     displayName: "Send pipeline run metadata to Log Analytics"
